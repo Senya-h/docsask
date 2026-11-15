@@ -1,0 +1,42 @@
+import type { Metadata } from "next";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { auth } from "@/lib/auth";
+import { SignOutButton } from "./sign-out-button";
+
+export const metadata: Metadata = { title: "Dashboard" };
+
+export default function DashboardPage() {
+  return (
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-12">
+      <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
+        <Greeting />
+      </Suspense>
+      <Card>
+        <CardHeader>
+          <CardTitle>No conversations yet</CardTitle>
+          <CardDescription>
+            Chat arrives in Phase 3, once the Next.js docs are ingested.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    </main>
+  );
+}
+
+/** Reads the session (request-time data), so it renders inside Suspense. */
+async function Greeting() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/sign-in?next=/dashboard");
+
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <h1 className="text-2xl font-semibold tracking-tight">
+        Welcome, {session.user.name}
+      </h1>
+      <SignOutButton />
+    </div>
+  );
+}
