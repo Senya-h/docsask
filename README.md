@@ -2,6 +2,8 @@
 
 Ask questions about the Next.js documentation and get streamed answers that cite the exact passage they came from. Includes an evaluation dashboard that measures retrieval and answer quality.
 
+**Live demo:** https://docsask-black.vercel.app (sign in with GitHub)
+
 > **Status:** Phase 1 (foundation) done. See `PLAN.md` for the full roadmap.
 
 ## Stack
