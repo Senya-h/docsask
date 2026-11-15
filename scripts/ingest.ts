@@ -115,7 +115,14 @@ async function main() {
   const stats = { ingested: 0, skipped: 0, failed: 0, chunks: 0, embedTokens: 0, embedChars: 0 };
   const started = Date.now();
 
+  // Circuit breaker: errors like a missing credit balance or a bad key fail
+  // every document the same way, so stop instead of marking the whole corpus failed.
+  const MAX_CONSECUTIVE_FAILURES = 5;
+  let consecutiveFailures = 0;
+  let aborted = false;
+
   const ingestOne = async (doc: Prepared) => {
+    if (aborted) return;
     const { source } = doc;
     const [existing] = await db
       .select({ id: schema.documents.id, checksum: schema.documents.checksum, status: schema.documents.status })
@@ -176,6 +183,7 @@ async function main() {
       });
       stats.ingested++;
       stats.chunks += doc.chunks.length;
+      consecutiveFailures = 0;
       console.log(`  ✓ ${source.path} (${doc.chunks.length} chunks)`);
     } catch (error) {
       stats.failed++;
@@ -185,6 +193,10 @@ async function main() {
         .set({ status: "failed", error: message.slice(0, 1000) })
         .where(eq(schema.documents.id, row.id));
       console.error(`  ✗ ${source.path}: ${message}`);
+      if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && !aborted) {
+        aborted = true;
+        console.error(`\nStopping: ${MAX_CONSECUTIVE_FAILURES} documents failed in a row. Fix the error above and re-run.`);
+      }
     }
   };
 
@@ -195,7 +207,11 @@ async function main() {
 
   const seconds = ((Date.now() - started) / 1000).toFixed(0);
   const total = usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
-  console.log(`\nDone in ${seconds}s: ${stats.ingested} ingested, ${stats.skipped} unchanged, ${stats.failed} failed`);
+  const notRun = docs.length - stats.ingested - stats.skipped - stats.failed;
+  console.log(
+    `\n${aborted ? "Stopped" : "Done"} in ${seconds}s: ${stats.ingested} ingested, ${stats.skipped} unchanged, ${stats.failed} failed` +
+      (notRun ? `, ${notRun} not attempted` : ""),
+  );
   console.log(`  chunks written:  ${stats.chunks}`);
   console.log(
     `  Haiku requests:  ${usage.requests}, prompt tokens ${total.toLocaleString()} ` +
