@@ -10,6 +10,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
@@ -121,7 +122,8 @@ export const documents = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("documents_version_path_idx").on(t.version, t.path)],
+  // Unique so re-running ingestion upserts instead of duplicating.
+  (t) => [uniqueIndex("documents_version_path_idx").on(t.version, t.path)],
 );
 
 export const chunks = pgTable(
