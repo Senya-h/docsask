@@ -9,12 +9,13 @@ import { NextResponse, type NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   if (!getSessionCookie(request)) {
     const signIn = new URL("/sign-in", request.url);
-    signIn.searchParams.set("next", request.nextUrl.pathname);
+    // Keep the query string so e.g. /search?q=… survives the sign-in round trip.
+    signIn.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
     return NextResponse.redirect(signIn);
   }
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/chat/:path*", "/library/:path*", "/evals/:path*"],
+  matcher: ["/dashboard/:path*", "/search/:path*", "/chat/:path*", "/library/:path*", "/evals/:path*"],
 };

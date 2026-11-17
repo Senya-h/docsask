@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,9 +17,21 @@ export default function DashboardPage() {
       </Suspense>
       <Card>
         <CardHeader>
+          <CardTitle>
+            <Link href="/search" className="hover:underline">
+              Search the docs →
+            </Link>
+          </CardTitle>
+          <CardDescription>
+            Find the passages that answer a question, ranked by hybrid search and a reranker.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle>No conversations yet</CardTitle>
           <CardDescription>
-            Chat arrives in Phase 3, once the Next.js docs are ingested.
+            Chat with cited answers arrives once the Claude API is enabled.
           </CardDescription>
         </CardHeader>
       </Card>
