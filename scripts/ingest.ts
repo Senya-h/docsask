@@ -6,17 +6,19 @@
  *   npm run ingest -- --only=caching   only documents whose path contains "caching"
  *   npm run ingest                     everything; unchanged documents are skipped
  *   npm run ingest -- --force          re-ingest even if the checksum matches
+ *   npm run ingest -- --no-context     skip the Claude context summaries (Voyage only)
  *
  * Idempotent: each document is keyed on (version, path) and skipped when its
  * checksum is unchanged and it is already "ready". A failed document is marked
- * "failed" with the error and retried on the next run.
+ * "failed" with the error and retried on the next run. A document indexed with
+ * --no-context is revisited by the next run that does write context.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Pool } from "@neondatabase/serverless";
 import { config } from "dotenv";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import pLimit from "p-limit";
 import * as schema from "../lib/db/schema";
@@ -39,6 +41,7 @@ const option = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.s
 
 const DRY_RUN = flag("dry-run");
 const FORCE = flag("force");
+const NO_CONTEXT = flag("no-context");
 const LIMIT = option("limit") ? Number(option("limit")) : undefined;
 const ONLY = option("only");
 const DOC_CONCURRENCY = 3;
@@ -103,14 +106,16 @@ async function main() {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const voyageKey = process.env.VOYAGE_API_KEY;
   const databaseUrl = process.env.DATABASE_URL;
-  if (!anthropicKey || !voyageKey || !databaseUrl) {
-    throw new Error("Set ANTHROPIC_API_KEY, VOYAGE_API_KEY and DATABASE_URL in .env.local (or use --dry-run).");
+  if ((!anthropicKey && !NO_CONTEXT) || !voyageKey || !databaseUrl) {
+    throw new Error(
+      "Set ANTHROPIC_API_KEY, VOYAGE_API_KEY and DATABASE_URL in .env.local (or use --dry-run / --no-context).",
+    );
   }
 
   const pool = new Pool({ connectionString: databaseUrl });
   const db = drizzle({ client: pool, schema });
   // The SDK retries 429/5xx with backoff; raise the default for a long batch job.
-  const anthropic = new Anthropic({ apiKey: anthropicKey, maxRetries: 6 });
+  const anthropic = NO_CONTEXT ? null : new Anthropic({ apiKey: anthropicKey, maxRetries: 6 });
   const usage = emptyUsage();
   const stats = { ingested: 0, skipped: 0, failed: 0, chunks: 0, embedTokens: 0, embedChars: 0 };
   const started = Date.now();
@@ -129,8 +134,20 @@ async function main() {
       .from(schema.documents)
       .where(and(eq(schema.documents.version, VERSION), eq(schema.documents.path, source.path)));
     if (!FORCE && existing?.checksum === source.checksum && existing.status === "ready") {
-      stats.skipped++;
-      return;
+      // Unchanged and indexed. When writing context, still revisit documents
+      // whose chunks were indexed without it (an earlier --no-context run).
+      const missing = NO_CONTEXT
+        ? 0
+        : (
+            await db
+              .select({ n: count() })
+              .from(schema.chunks)
+              .where(and(eq(schema.chunks.documentId, existing.id), isNull(schema.chunks.context)))
+          )[0].n;
+      if (missing === 0) {
+        stats.skipped++;
+        return;
+      }
     }
 
     const [row] = await db
@@ -158,7 +175,9 @@ async function main() {
       .returning({ id: schema.documents.id });
 
     try {
-      const contexts = await contextualizeDocument(anthropic, doc, doc.chunks, usage);
+      const contexts = anthropic
+        ? await contextualizeDocument(anthropic, doc, doc.chunks, usage)
+        : doc.chunks.map(() => "");
       const inputs = doc.chunks.map((c, i) => embeddingInput({ ...c, context: contexts[i] }));
       const { embeddings, totalTokens } = await embed(inputs, "document", { apiKey: voyageKey });
       stats.embedTokens += totalTokens;
@@ -200,7 +219,9 @@ async function main() {
     }
   };
 
-  console.log(`\nIngesting with ${DOC_CONCURRENCY} documents in parallel…`);
+  console.log(
+    `\nIngesting with ${DOC_CONCURRENCY} documents in parallel${NO_CONTEXT ? ", without context summaries" : ""}…`,
+  );
   const limit = pLimit(DOC_CONCURRENCY);
   await Promise.all(docs.map((d) => limit(() => ingestOne(d))));
   await pool.end();
